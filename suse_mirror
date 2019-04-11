@@ -1,0 +1,658 @@
+#!/usr/bin/env python3
+'''
+SuSE package repository mirroring tool.
+'''
+
+# Import standard libraries
+import argparse
+import calendar
+import configparser
+import grp
+import json
+import os
+import platform
+import pwd
+import re
+import signal
+import sys
+import syslog
+import threading
+import time
+import urllib
+from queue import Queue
+
+# Import third-party libraries
+import requests
+from bs4 import BeautifulSoup
+
+# Our version
+VERSION = '1.0.0'
+
+# Lockfile
+LOCKFILE = '/var/lock/suse_mirror.lock'
+
+# Default User-Agent
+DEFAULT_USER_AGENT = 'sles-mirror/%s (%s) python/%s' % (VERSION, platform.platform(), platform.python_version())
+
+# Default configuration file
+DEFAULT_CONFIG_FILE = '/etc/suse-mirror.conf'
+
+# Placeholders for command-line and configuration file options
+OPTIONS = {}
+CONFIG = {}
+
+# Queue to hold items to be downloaded
+download_queue = Queue()
+download_threads = []
+
+# Lock for doing certain in a thread-safe manner
+thread_lock = threading.Lock()
+
+# Global counters
+downloaded = 0
+
+# Work around for strptime thread safety bug (http://bugs.python.org/issue7980)
+time.strptime('2012', '%Y')
+
+
+def request_url_head(url, auth_token):
+    '''
+    Helper function to get a URL's metadata
+    '''
+    # Assemble the headers to be used
+    headers = {
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'accept-encoding': 'gzip, deflate, br',
+        'accept-language': 'en-US, en;q=0.5',
+        'cache-control': 'no-cache',
+        'connection': 'keepalive',
+        'dnt': '1',
+        'pragma': 'no-cache',
+        'user-agent': CONFIG['user_agent'],
+    }
+
+    attempt = 1
+
+    while attempt <= CONFIG['max_retries']:
+        # Request the metadata for the URL
+        debug('retrieving metadata for "%s?%s" (%s/%s)' % (url, auth_token, attempt, CONFIG['max_retries']))
+        response = requests.head(url + '?' + auth_token, headers=headers)
+
+        # Make sure the request was successful
+        if response.status_code == 200:
+            # We need to ensure that the Last-Modified and Content-Length
+            # headers are present in the response
+            if 'Last-Modified' not in response.headers:
+                error('Last-Modified not present in metadata for %s' % (url))
+                error('Content-Length not present in metadata for %s' % (url))
+            else:
+                return response
+
+        error('Unable to retrieve metadata for %s?%s: %s' % (url, auth_token, response.status_code))
+
+        # The upstream SuSE servers are prone to returning a Bad Gateway (502)
+        # error.  We'll return None (fail) for anything other than a Bad
+        # Gateway error.
+        if response.status_code != 502:
+            return None
+
+        attempt = attempt + 1
+    error('Unable to retrieve metadata for %s: exceeded max number of attempts' % (url))
+    return None
+
+
+def request_url(url, auth_token):
+    '''
+    Helper function to download URLs
+    '''
+    # Assemble the headers to be used
+    headers = {
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'accept-encoding': 'gzip, deflate, br',
+        'accept-language': 'en-US, en;q=0.5',
+        'cache-control': 'no-cache',
+        'connection': 'keepalive',
+        'dnt': '1',
+        'pragma': 'no-cache',
+        'user-agent': CONFIG['user_agent'],
+    }
+
+    attempt = 1
+
+    while attempt <= CONFIG['max_retries']:
+        # Request the URL
+        debug('retrieving %s?%s (%s/%s)' % (url, auth_token, attempt, CONFIG['max_retries']))
+        response = requests.get(url + '?' + auth_token, headers=headers)
+        if response.status_code == 200:
+            return response
+        error('Unable to retrieve %s?%s: %s' % (url, auth_token, response.status_code))
+        if response.status_code != 502:
+            return None
+        attempt = attempt + 1
+    error('Unable to retrieve %s: exceeded max number of attempts')
+    return None
+
+
+def download_file(repo, distro, url, auth_token, basepath):
+    '''
+    Function to download files
+    '''
+    global downloaded
+
+    debug('downloading %s/%s %s (token:%s)' % (repo, distro, url, auth_token))
+
+    # Assemble the full path to the local file
+    local_path = os.path.join(CONFIG['base_path'], repo, distro, basepath, os.path.basename(url))
+    debug('local_path = "%s"' % (local_path))
+
+    # Get the metadata of the remote file.  The size and mtime
+    # will be used to determine if we need to download the file.
+    response = request_url_head(url, auth_token)
+    if response is None:
+        return
+
+    # Convert the Last-Modified header into epoch time
+    remote_mtime = calendar.timegm(time.strptime(response.headers['Last-Modified'], '%a, %d %b %Y %H:%M:%S %Z'))
+
+    # Get the size of the remote file
+    remote_size = int(response.headers['Content-Length'])
+    debug('%s: (%s bytes, %s, %s)' % (url, remote_size, response.headers['Last-Modified'], remote_mtime))
+
+
+    # If the file exists and the mtime and size match the remote file
+    # then we don't need to download the file.
+    if os.path.exists(local_path):
+        stat = os.stat(local_path)
+        if int(stat.st_mtime) == remote_mtime and int(stat.st_size) == remote_size:
+            debug('%s already exists, skipping' % (local_path))
+            return
+        else:
+            debug('%s exists but needs to be re-downloaded' % (local_path))
+
+    # Make sure the directory structure exists
+    if not os.path.exists(os.path.dirname(local_path)):
+        debug('creating directory "%s"' % (os.path.dirname(local_path)))
+        try:
+            os.makedirs(os.path.dirname(local_path), mode=0o755)
+        except OSError as err:
+            fatal('Unable to create "%s": %s' % (os.path.dirname(local_path), err))
+            return # should never get here
+
+        # Set the owner and group of the directory
+        os.chown(os.path.dirname(local_path), CONFIG['uid'], CONFIG['gid'])
+
+    # Download the file
+    response = request_url(url, auth_token)
+    if response is None:
+        return
+
+    try:
+        handle = open(local_path, 'wb')
+    except OSError as err:
+        fatal('unable to open "%s": %s' % (local_path, err))
+        return # should never get here
+
+    # Write the file and close the handle
+    handle.write(response.content)
+    handle.close()
+   
+    # Set the owner and group
+    os.chown(local_path, CONFIG['uid'], CONFIG['gid'])
+
+    # Set the mtime of the file to match the remote file
+    os.utime(local_path, (remote_mtime, remote_mtime))
+
+    # Verify that we were successful.
+    stat = os.stat(local_path)
+    if int(stat.st_mtime) != remote_mtime:
+        error('local mtime "%s" does not match remote mtime "%s"' % (stat.st_mtime, remote_mtime))
+    if int(stat.st_size) != remote_size:
+        error('local size "%s" does not match remote size "%s"' % (stat.st_size, remote_size))
+
+    # Update the downloaded file count
+    thread_lock.acquire()
+    downloaded += 1
+    thread_lock.release()
+    return
+
+
+def mirror_url(repo, distro, url, auth_token, basepath):
+    '''
+    Main function for mirroring a URL.  Files will be added to the download
+    queue and directories will be traversed.
+    '''
+    debug('mirroring %s/%s %s (token:%s)' % (repo, distro, url, auth_token))
+
+    if re.match('.*/$', url):
+        response = request_url(url, auth_token)
+        if response is None:
+            return
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+        links = soup.findAll('a')
+
+        for link in links:
+            path = urllib.parse.urlparse((link.get('href'))).path
+
+            # Skip empty paths
+            if path == '':
+                debug('found link "%s", skipping empty path' % (path))
+                continue
+
+            # Skip full paths
+            if re.match('^/', path):
+                debug('found link "%s", skipping full path' % (path))
+                continue
+
+            # Skip '..'
+            if re.match('[.][.]', path):
+                debug('found link "%s", skipping double-dot' % (path))
+                continue
+
+            # The rest should be either a directory or a file
+            debug('found link "%s"' % (path))
+            if re.match('.*/$', path):
+                # Mirror directories
+                queue_url('dir', repo, distro, url + path, auth_token, basepath+path)
+            else:
+                # Queue files for download
+                queue_url('file', repo, distro, url + path, auth_token, basepath)
+    else:
+        download_file(repo, distro, url, auth_token, basepath)
+
+    return
+
+
+def queue_url(url_type, repo, distro, url, auth_token, basepath=''):
+    '''
+    Helper function to add a URL to the download queue
+    '''
+    debug('queueing %s/%s %s (token:%s)' % (repo, distro, url, auth_token))
+    download_queue.put([url_type, repo, distro, url, auth_token, basepath])
+    return
+
+
+def process_queue():
+    '''
+    Iterate over the queue
+    '''
+    while True:
+        (url_type, repo, distro, url, auth_token, basepath) = download_queue.get()
+        debug('process_queue: %s/%s %s (token:%s)' % (repo, distro, url, auth_token))
+        if url_type == 'dir':
+            mirror_url(repo, distro, url, auth_token, basepath)
+        else:
+            download_file(repo, distro, url, auth_token, basepath)
+        download_queue.task_done()
+        debug('%s objects remain in the queue' % (download_queue.qsize()))
+        if download_queue.qsize() == 0:
+            break
+
+
+def get_available_repos():
+    '''
+    Get a list of SuSE repositories available to the specified subscription
+    key.  The list is a dictionary in the format:
+
+    repository_name: {
+        distro_target: url
+    }
+    '''
+    products_url = "https://scc.suse.com/connect/subscriptions/products"
+
+    # Assemble the headers to be used
+    headers = {
+        'accept': 'application/json, text/javascript, */*; q=0.01',
+        'accept-encoding': 'gzip, deflate, br',
+        'accept-language': 'en-US, en;q=0.5',
+        'cache-control': 'no-cache',
+        'connection': 'keepalive',
+        'dnt': '1',
+        'host': 'scc.suse.com',
+        'pragma': 'no-cache',
+        'user-agent': CONFIG['user_agent'],
+        'x-requested-with': 'XMLHttpRequest',
+        'Authorization': 'Token token=%s' % (CONFIG['suse_registration_code']),
+    }
+
+    notice('Getting subscription information')
+    response = requests.get(products_url, headers=headers)
+    if response.status_code != 200:
+        fatal('Unable to get subscription information: (status code: %s), aborting' % (response.status_code))
+
+    notice('Assembling mirror targets')
+    json_data = json.loads(response.text)
+
+    targets = {}
+    repositories = []
+    for json_record in json_data:
+        # Get the list of repositories
+        repositories = []
+        for extension in json_record['extensions']:
+            for repository in extension['repositories']:
+                repositories.append(repository)
+
+        for repository in json_record['repositories']:
+            repositories.append(repository)
+
+        # Iterate over the list of repositories, extracting
+        # the repository name, distribution target, and URL
+        # for each repository.
+        for repository in repositories:
+            if repository['name'] not in targets:
+                targets[repository['name']] = {}
+
+            # Extract the distrobution-architecture (distro_target) for the
+            # repository
+            if repository['distro_target'] in targets[repository['name']]:
+                if targets[repository['name']][repository['distro_target']] != repository['url']:
+                    fatal('Duplicate target %s already in %s with different url %s' %
+                          (repository['distro_target'], repository['name'], repository['url']))
+
+            # Add the URL
+            targets[repository['name']][repository['distro_target']] = repository['url']
+
+    # Return the dictionary list
+    return targets
+
+
+def parse_arguments():
+    '''
+    Parse the command-line arguments
+    '''
+    parser = argparse.ArgumentParser(description='SuSE package repository mirroing tool')
+
+    parser.add_argument(
+        '-a', '--user-agent',
+        dest='user_agent',
+        default=DEFAULT_USER_AGENT,
+        help=argparse.SUPPRESS,
+    )
+
+    parser.add_argument(
+        '-C', '--config',
+        dest='config_file',
+        default=DEFAULT_CONFIG_FILE,
+        help='Specify an alternate configuration file [default: %(default)s]',
+    )
+
+    parser.add_argument(
+        '-d', '--debug',
+        dest='debug',
+        action='store_true',
+        default=False,
+        help='Print extra debugging messages',
+    )
+
+    parser.add_argument(
+        '-l', '--list-available-repos',
+        dest='list_available_repos',
+        action='store_true',
+        default=False,
+        help='List the repositories available to this subscription',
+    )
+
+    parser.add_argument(
+        '-m', '--max-retries',
+        dest='max_retries',
+        type=int,
+        default=None,
+        help='Specify the maximum number of times to try retrieving metadata and files',
+    )
+
+    parser.add_argument(
+        '-t', '--threads',
+        dest='nthreads',
+        type=int,
+        default=None,
+        help='Specify the number of threads to use [default: %(default)s]',
+    )
+
+    parser.add_argument(
+        '-v', '--verbose',
+        dest='verbose',
+        action='count',
+        default=0,
+        help='Print more verbose output (may be specified more than once)',
+    )
+
+    parser.add_argument(
+        '-V', '--version',
+        action='version',
+        version='%(prog)s v' + VERSION,
+        help='Print version information',
+    )
+
+    # Parse the command-line arguments
+    args = parser.parse_args()
+    OPTIONS.update(vars(args))
+
+
+def load_config_file():
+    '''
+    Read and parse the configuration file
+    configparser expects an INI file so we'll prepend '[DEFAULT]'
+    in order to convice configparser that everything is OK
+    '''
+    config = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        with open(OPTIONS['config_file']) as handle:
+            config.read_string("[DEFAULT]\n" + handle.read())
+            handle.close()
+    except OSError as err:
+        fatal('unable to open "%s": %s' %(OPTIONS['config_file'], err))
+        clean_exit(1) # should never get here
+
+    # Convert the config object into a dictionary
+    for (var, val) in config.items('DEFAULT'):
+        CONFIG[var] = val
+
+    # Override the configuration options with the command-line
+    for key in OPTIONS:
+        if OPTIONS[key] is not None:
+            CONFIG[key] = OPTIONS[key]
+
+    # Ensure nthreads is an integer
+    if 'nthreads' in CONFIG:
+        CONFIG['nthreads'] = int(CONFIG['nthreads'])
+    else:
+        CONFIG['nthreads'] = 1
+
+    # Ensure max_retries is an integer
+    if 'max_retries' in CONFIG:
+        CONFIG['max_retries'] = int(CONFIG['max_retries'])
+    else:
+        CONFIG['max_retries'] = 3
+
+    # Convert mirror_sections into a list
+    if 'mirror_sections' in CONFIG:
+        CONFIG['mirror_sections'] = CONFIG['mirror_sections'].strip()
+        CONFIG['mirror_sections'] = CONFIG['mirror_sections'].split()
+
+    # Convert exclude_repositories into a list
+    if 'exclude_repositories' in CONFIG:
+        CONFIG['exclude_repositories'] = CONFIG['exclude_repositories'].strip()
+        CONFIG['exclude_repositories'] = CONFIG['exclude_repositories'].split()
+    else:
+        CONFIG['exclude_repositories'] = []
+
+    # Convert the owner to uid
+    CONFIG['uid'] = pwd.getpwnam(CONFIG['owner']).pw_uid
+    CONFIG['gid'] = grp.getgrnam(CONFIG['group']).gr_gid
+
+
+def debug(string):
+    '''
+    Helper function to log/print debugging messages.
+    Messages will be prepended with the tag "debug", which will also
+    include the current thread's identifier.
+    '''
+    if CONFIG['debug'] is True:
+        logprint('debug(%s): %s' % (threading.current_thread().name, string))
+    return
+
+
+def error(string):
+    '''
+    Helper function to log/print non-fatal error messages and exit.
+    Messages will be prepended with the tag "error", which will also
+    include the current thread's identifier.
+    '''
+    logprint('error(%s): %s' % (threading.current_thread().name, string))
+    return
+
+
+def fatal(string):
+    '''
+    Helper function to log/print fatal error messages and exit.
+    Messages will be prepended with the tag "fatal", which will also
+    include the current thread's identifier.
+    '''
+    logprint('fatal(%s): %s' % (threading.current_thread().name, string))
+    clean_exit(1)
+
+
+def notice(string):
+    '''
+    Helper function to log/print general notice messages.
+    Messages will be prepended with the tag "notice", which will also
+    include the current thread's identifier.
+    '''
+    logprint('notice(%s): %s' % (threading.current_thread().name, string))
+    return
+
+
+def warning(string):
+    '''
+    Helper function to log/print warning messages.
+    Messages will be prepended with the tag "warning", which will also
+    include the current thread's identifier.
+    '''
+    logprint('warning(%s): %s' % (threading.current_thread().name, string))
+    return
+
+
+def logprint(string):
+    '''
+    Helper function to log and print messages.  Generally
+    this will be called by higher-level functions such as
+    debug, error, fatal, notice, and warning.
+    '''
+    thread_lock.acquire()
+    #syslog.syslog(string)
+    print(string)
+    thread_lock.release()
+    return
+
+
+def signal_handler(signalnum, frame):
+    '''
+    Helper function to exit cleanly when SIGINT is caught
+    '''
+    del frame
+    notice('caught signal "%s"' % (signal.Signals(signalnum).name))
+    clean_exit(0)
+
+
+def clean_exit(exit_code):
+    '''
+    Helper function to perform cleanup prior to exiting
+    '''
+    # Remove the lock file
+    if os.path.exists(LOCKFILE):
+        os.remove(LOCKFILE)
+
+    # Announce that we're done
+    notice('Finished')
+
+    notice('Stats')
+    notice('Downloaded:          %s' % (downloaded))
+    if download_queue in vars():
+        notice('Remaining in queue:  %s' % (dowload_queue.qsize()))
+
+    # Exit with our desired exit code
+    sys.exit(exit_code)
+
+
+def main():
+    '''
+    Main processing function
+    '''
+
+    # Make sure we're not already running
+    if os.path.exists(LOCKFILE):
+        error('another suse_mirror process is already running')
+        sys.exit(1)
+
+    # Touch the lock file to prevent multiple invocations
+    open(LOCKFILE, 'a').close()
+
+    # Catch SIGINT
+    signal.signal(signal.SIGINT, signal_handler)
+
+    # Start SYSLOG logging
+    syslog.openlog(os.path.basename(sys.argv[0]), logoption=syslog.LOG_PID)
+
+    # Load our command-line and configuration file options
+    parse_arguments()
+    load_config_file()
+
+    # Show our configurations (debugging)
+    if CONFIG['debug']:
+        for option in CONFIG:
+            debug('CONFIG[%s]: %s' % (option, CONFIG[option]))
+
+    # Announce that we're starting
+    notice('Starting')
+
+    # Set the umask for this run
+    os.umask(int(CONFIG['umask'], 8))
+
+    # Get the list of repositories available to our subscription
+    available_repos = get_available_repos()
+    if CONFIG['list_available_repos']:
+        for repo in sorted(available_repos):
+            if repo in CONFIG['exclude_repositories']:
+                print('%s (excluded)' % (repo))
+            else:
+                print('%s' % (repo))
+        clean_exit(0)
+
+    debug('Creating threads')
+    for i in range(CONFIG['nthreads']):
+        download_thread = threading.Thread(target=process_queue)
+        download_thread.daemon = True
+        download_threads.append(download_thread)
+
+    # Iterate over the available repositories and mirror
+    # the ones we care about
+    for repo in sorted(available_repos):
+        if repo not in CONFIG['exclude_repositories']:
+            for distro_target in available_repos[repo]:
+                if distro_target is None:
+                    distro_target = 'None'
+                if distro_target in CONFIG['mirror_sections']:
+                    repo_url = available_repos[repo][distro_target]
+                    urlp = urllib.parse.urlparse(repo_url)
+
+                    url = urlp.scheme + "://" + urlp.netloc + urlp.path
+                    auth_token = urlp.query
+
+                    queue_url('dir', repo, distro_target, url, auth_token)
+
+
+    debug('Starting %s threads' % (len(download_threads)))
+    for download_thread in download_threads:
+        download_thread.start()
+
+    debug('Joining threads')
+    for download_thread in download_threads:
+        download_thread.join()
+
+
+# Allow other programs to source this one as a library
+if __name__ == '__main__':
+    try:
+        main()
+    finally:
+        sys.exit(0)

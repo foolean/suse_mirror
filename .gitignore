@@ -1,0 +1,6 @@
+__pycache__/
+*.out
+*.out.*
+*.orig
+suse_mirror.conf
+suse_mirrorc
