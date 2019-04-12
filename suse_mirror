@@ -7,6 +7,7 @@ SuSE package repository mirroring tool.
 import argparse
 import calendar
 import configparser
+import errno
 import grp
 import json
 import os
@@ -172,6 +173,11 @@ def download_file(repo, distro, url, auth_token, basepath):
         try:
             os.makedirs(os.path.dirname(local_path), mode=0o755)
         except OSError as err:
+            if err.errno == errno.EEXIST:
+                # A race condition exists where another thread may create
+                # the directory path before us.  If this happens, we will
+                # accept it since the goal is to create the directory.
+                return
             fatal('Unable to create "%s": %s' % (os.path.dirname(local_path), err))
             return # should never get here
 
@@ -216,6 +222,7 @@ def download_file(repo, distro, url, auth_token, basepath):
     thread_lock.acquire()
     downloaded += 1
     thread_lock.release()
+
     return
 
 
@@ -288,6 +295,16 @@ def process_queue():
             download_file(repo, distro, url, auth_token, basepath)
         download_queue.task_done()
         debug('%s objects remain in the queue' % (download_queue.qsize()))
+
+        alive = 0
+        for download_thread in download_threads:
+            if download_thread.isAlive():
+                alive += 1
+
+        debug('%s out of %s threads still alive' % (alive, len(download_threads)))
+
+        # Restart any
+        # Exit the loop if there is nothing left in the queue
         if download_queue.qsize() == 0:
             break
 
