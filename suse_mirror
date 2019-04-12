@@ -75,7 +75,7 @@ def request_url_head(url, auth_token):
 
     while attempt <= CONFIG['max_retries']:
         # Request the metadata for the URL
-        debug('retrieving metadata for "%s?%s" (%s/%s)' % (url, auth_token, attempt, CONFIG['max_retries']))
+        debug('Retrieving metadata for "%s?%s" (%s/%s)' % (url, auth_token, attempt, CONFIG['max_retries']))
         response = requests.head(url + '?' + auth_token, headers=headers)
 
         # Make sure the request was successful
@@ -88,7 +88,7 @@ def request_url_head(url, auth_token):
             else:
                 return response
 
-        error('Unable to retrieve metadata for %s?%s: %s' % (url, auth_token, response.status_code))
+        error('Unable to retrieve metadata for %s?%s: %s: %s' % (url, auth_token, response.reason, response.status_code))
 
         # The upstream SuSE servers are prone to returning a Bad Gateway (502)
         # error.  We'll return None (fail) for anything other than a Bad
@@ -121,11 +121,11 @@ def request_url(url, auth_token):
 
     while attempt <= CONFIG['max_retries']:
         # Request the URL
-        debug('retrieving %s?%s (%s/%s)' % (url, auth_token, attempt, CONFIG['max_retries']))
+        notice('Retrieving %s?%s (%s/%s)' % (url, auth_token, attempt, CONFIG['max_retries']))
         response = requests.get(url + '?' + auth_token, headers=headers)
         if response.status_code == 200:
             return response
-        error('Unable to retrieve %s?%s: %s' % (url, auth_token, response.status_code))
+        error('Unable to retrieve %s?%s: %s: %s' % (url, auth_token, response.reason, response.status_code))
         if response.status_code != 502:
             return None
         attempt = attempt + 1
@@ -139,11 +139,10 @@ def download_file(repo, distro, url, auth_token, basepath):
     '''
     global downloaded
 
-    debug('downloading %s/%s %s (token:%s)' % (repo, distro, url, auth_token))
+    notice('downloading %s/%s %s (token:%s)' % (repo, distro, url, auth_token))
 
     # Assemble the full path to the local file
     local_path = os.path.join(CONFIG['base_path'], repo, distro, basepath, os.path.basename(url))
-    debug('local_path = "%s"' % (local_path))
 
     # Get the metadata of the remote file.  The size and mtime
     # will be used to determine if we need to download the file.
@@ -156,22 +155,20 @@ def download_file(repo, distro, url, auth_token, basepath):
 
     # Get the size of the remote file
     remote_size = int(response.headers['Content-Length'])
-    debug('%s: (%s bytes, %s, %s)' % (url, remote_size, response.headers['Last-Modified'], remote_mtime))
-
 
     # If the file exists and the mtime and size match the remote file
     # then we don't need to download the file.
     if os.path.exists(local_path):
         stat = os.stat(local_path)
         if int(stat.st_mtime) == remote_mtime and int(stat.st_size) == remote_size:
-            debug('%s already exists, skipping' % (local_path))
+            notice('%s already exists, skipping' % (local_path))
             return
         else:
-            debug('%s exists but needs to be re-downloaded' % (local_path))
+            notice('%s exists but needs to be re-downloaded' % (local_path))
 
     # Make sure the directory structure exists
     if not os.path.exists(os.path.dirname(local_path)):
-        debug('creating directory "%s"' % (os.path.dirname(local_path)))
+        notice('Creating directory "%s"' % (os.path.dirname(local_path)))
         try:
             os.makedirs(os.path.dirname(local_path), mode=0o755)
         except OSError as err:
@@ -179,7 +176,10 @@ def download_file(repo, distro, url, auth_token, basepath):
             return # should never get here
 
         # Set the owner and group of the directory
-        os.chown(os.path.dirname(local_path), CONFIG['uid'], CONFIG['gid'])
+        try:
+            os.chown(os.path.dirname(local_path), CONFIG['uid'], CONFIG['gid'])
+        except OSError as err:
+            error('Unable to chown "%s" to %s:%s: %s' % (os.path.dirname(local_path), CONFIG['uid'], CONFIG['gid'], err))
 
     # Download the file
     response = request_url(url, auth_token)
@@ -189,15 +189,18 @@ def download_file(repo, distro, url, auth_token, basepath):
     try:
         handle = open(local_path, 'wb')
     except OSError as err:
-        fatal('unable to open "%s": %s' % (local_path, err))
+        fatal('Unable to open "%s": %s' % (local_path, err))
         return # should never get here
 
     # Write the file and close the handle
     handle.write(response.content)
     handle.close()
-   
+
     # Set the owner and group
-    os.chown(local_path, CONFIG['uid'], CONFIG['gid'])
+    try:
+        os.chown(local_path, CONFIG['uid'], CONFIG['gid'])
+    except OSError as err:
+        error('Unable to chown "%s" to %s:%s: %s' % (local_path, CONFIG['uid'], CONFIG['gid'], err))
 
     # Set the mtime of the file to match the remote file
     os.utime(local_path, (remote_mtime, remote_mtime))
@@ -205,9 +208,9 @@ def download_file(repo, distro, url, auth_token, basepath):
     # Verify that we were successful.
     stat = os.stat(local_path)
     if int(stat.st_mtime) != remote_mtime:
-        error('local mtime "%s" does not match remote mtime "%s"' % (stat.st_mtime, remote_mtime))
+        error('local mtime does not match remote (%s != %s): %s' % (stat.st_mtime, remote_mtime, local_path))
     if int(stat.st_size) != remote_size:
-        error('local size "%s" does not match remote size "%s"' % (stat.st_size, remote_size))
+        error('local size does not match remote (%s != %s): %s' % (stat.st_size, remote_size, local_path))
 
     # Update the downloaded file count
     thread_lock.acquire()
@@ -221,7 +224,7 @@ def mirror_url(repo, distro, url, auth_token, basepath):
     Main function for mirroring a URL.  Files will be added to the download
     queue and directories will be traversed.
     '''
-    debug('mirroring %s/%s %s (token:%s)' % (repo, distro, url, auth_token))
+    notice('Mirroring %s/%s %s (token:%s)' % (repo, distro, url, auth_token))
 
     if re.match('.*/$', url):
         response = request_url(url, auth_token)
@@ -267,7 +270,7 @@ def queue_url(url_type, repo, distro, url, auth_token, basepath=''):
     '''
     Helper function to add a URL to the download queue
     '''
-    debug('queueing %s/%s %s (token:%s)' % (repo, distro, url, auth_token))
+    notice('Queueing %s/%s %s (token:%s)' % (repo, distro, url, auth_token))
     download_queue.put([url_type, repo, distro, url, auth_token, basepath])
     return
 
@@ -322,6 +325,7 @@ def get_available_repos():
 
     notice('Assembling mirror targets')
     json_data = json.loads(response.text)
+    #print(json.dumps(json_data, indent=4, sort_keys=True))
 
     targets = {}
     repositories = []
@@ -385,11 +389,19 @@ def parse_arguments():
     )
 
     parser.add_argument(
-        '-l', '--list-available-repos',
+        '--list-available-repos',
         dest='list_available_repos',
         action='store_true',
         default=False,
         help='List the repositories available to this subscription',
+    )
+
+    parser.add_argument(
+        '--list-available-distros',
+        dest='list_available_distros',
+        action='store_true',
+        default=False,
+        help='List the distro targets available to this subscription',
     )
 
     parser.add_argument(
@@ -398,6 +410,14 @@ def parse_arguments():
         type=int,
         default=None,
         help='Specify the maximum number of times to try retrieving metadata and files',
+    )
+
+    parser.add_argument(
+        '-s', '--syslog',
+        dest='syslog',
+        action='store_true',
+        default=False,
+        help='Log messages to syslog',
     )
 
     parser.add_argument(
@@ -539,8 +559,12 @@ def logprint(string):
     debug, error, fatal, notice, and warning.
     '''
     thread_lock.acquire()
-    #syslog.syslog(string)
+
+    #if CONFIG['sylog'] is True:
+    syslog.syslog(string)
+
     print(string)
+
     thread_lock.release()
     return
 
@@ -560,6 +584,7 @@ def clean_exit(exit_code):
     '''
     # Remove the lock file
     if os.path.exists(LOCKFILE):
+        debug('Removing %s' % (LOCKFILE))
         os.remove(LOCKFILE)
 
     # Announce that we're done
@@ -618,7 +643,21 @@ def main():
                 print('%s' % (repo))
         clean_exit(0)
 
-    debug('Creating threads')
+    # Get the list of distro targets available to our subscription
+    if CONFIG['list_available_distros']:
+        distro_targets = []
+        for repo in sorted(available_repos):
+            for distro_target in available_repos[repo]:
+                if distro_target is None:
+                    distro_target = 'None'
+                if distro_target not in distro_targets:
+                    distro_targets.append(distro_target)
+
+        for distro_target in sorted(distro_targets):
+            print('%s' % (distro_target))
+        clean_exit(0)
+
+    notice('Creating threads')
     for i in range(CONFIG['nthreads']):
         download_thread = threading.Thread(target=process_queue)
         download_thread.daemon = True
@@ -626,6 +665,7 @@ def main():
 
     # Iterate over the available repositories and mirror
     # the ones we care about
+    notice('Pre-loading queue')
     for repo in sorted(available_repos):
         if repo not in CONFIG['exclude_repositories']:
             for distro_target in available_repos[repo]:
@@ -641,11 +681,11 @@ def main():
                     queue_url('dir', repo, distro_target, url, auth_token)
 
 
-    debug('Starting %s threads' % (len(download_threads)))
+    notice('Starting %s threads' % (len(download_threads)))
     for download_thread in download_threads:
         download_thread.start()
 
-    debug('Joining threads')
+    notice('Joining threads')
     for download_thread in download_threads:
         download_thread.join()
 
