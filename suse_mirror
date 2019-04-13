@@ -377,6 +377,18 @@ def get_available_repos():
     return targets
 
 
+def list_available_repos(available_repos, distro=''):
+
+    for repo in sorted(available_repos):
+        for distro_target in available_repos[repo]:
+            if distro == '' or distro == distro_target:
+                if repo in CONFIG['exclude_repositories']:
+                    print('%s (excluded)' % (repo))
+                else:
+                    print('%s' % (repo))
+    clean_exit(0)
+
+
 def parse_arguments():
     '''
     Parse the command-line arguments
@@ -403,22 +415,6 @@ def parse_arguments():
         action='store_true',
         default=False,
         help='Print extra debugging messages',
-    )
-
-    parser.add_argument(
-        '--list-available-repos',
-        dest='list_available_repos',
-        action='store_true',
-        default=False,
-        help='List the repositories available to this subscription',
-    )
-
-    parser.add_argument(
-        '--list-available-distros',
-        dest='list_available_distros',
-        action='store_true',
-        default=False,
-        help='List the distro targets available to this subscription',
     )
 
     parser.add_argument(
@@ -458,6 +454,33 @@ def parse_arguments():
         action='version',
         version='%(prog)s v' + VERSION,
         help='Print version information',
+    )
+
+
+    group = parser.add_argument_group('Query options')
+
+    group.add_argument(
+        '--list-available-repos',
+        dest='list_available_repos',
+        action='store_true',
+        default=False,
+        help='List the repositories available to this subscription',
+    )
+
+    group.add_argument(
+        '--list-available-distros',
+        dest='list_available_distros',
+        action='store_true',
+        default=False,
+        help='List the distro targets available to this subscription',
+    )
+
+    group.add_argument(
+        '--list-distro-repos',
+        dest='list_distro_repos',
+        default='',
+        metavar='DISTRO_TARGET',
+        help='List repositories for a specific distro target available to this subscription',
     )
 
     # Parse the command-line arguments
@@ -653,12 +676,10 @@ def main():
     # Get the list of repositories available to our subscription
     available_repos = get_available_repos()
     if CONFIG['list_available_repos']:
-        for repo in sorted(available_repos):
-            if repo in CONFIG['exclude_repositories']:
-                print('%s (excluded)' % (repo))
-            else:
-                print('%s' % (repo))
-        clean_exit(0)
+        list_available_repos(available_repos)
+
+    if CONFIG['list_distro_repos'] != '':
+        list_available_repos(available_repos, CONFIG['list_distro_repos'])
 
     # Get the list of distro targets available to our subscription
     if CONFIG['list_available_distros']:
