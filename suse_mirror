@@ -644,6 +644,10 @@ def main():
     Main processing function
     '''
 
+    # Load our command-line and configuration file options
+    parse_arguments()
+    load_config_file()
+
     # Make sure we're not already running
     if os.path.exists(LOCKFILE):
         error('another suse_mirror process is already running')
@@ -657,10 +661,6 @@ def main():
 
     # Start SYSLOG logging
     syslog.openlog(os.path.basename(sys.argv[0]), logoption=syslog.LOG_PID)
-
-    # Load our command-line and configuration file options
-    parse_arguments()
-    load_config_file()
 
     # Show our configurations (debugging)
     if CONFIG['debug']:
