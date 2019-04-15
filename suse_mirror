@@ -37,6 +37,7 @@ DEFAULT_USER_AGENT = 'sles-mirror/%s (%s) python/%s' % (VERSION, platform.platfo
 
 # Default configuration file
 DEFAULT_CONFIG_FILE = '/etc/suse-mirror.conf'
+DEFAULT_EXCLUDE_FILE = 'exclude.repos'
 
 # Placeholders for command-line and configuration file options
 OPTIONS = {}
@@ -512,6 +513,11 @@ def load_config_file():
         if OPTIONS[key] is not None:
             CONFIG[key] = OPTIONS[key]
 
+    # Load the excluded repositories
+    if 'exclude_file' not in CONFIG:
+        CONFIG['exclude_file'] = DEFAULT_EXCLUDE_FILE
+    CONFIG['exclude_repositories'] = load_exclusions(os.path.dirname(CONFIG['config_file']) + '/' + CONFIG['exclude_file'])
+
     # Ensure nthreads is an integer
     if 'nthreads' in CONFIG:
         CONFIG['nthreads'] = int(CONFIG['nthreads'])
@@ -529,16 +535,48 @@ def load_config_file():
         CONFIG['mirror_sections'] = CONFIG['mirror_sections'].strip()
         CONFIG['mirror_sections'] = CONFIG['mirror_sections'].split()
 
-    # Convert exclude_repositories into a list
-    if 'exclude_repositories' in CONFIG:
-        CONFIG['exclude_repositories'] = CONFIG['exclude_repositories'].strip()
-        CONFIG['exclude_repositories'] = CONFIG['exclude_repositories'].split()
-    else:
-        CONFIG['exclude_repositories'] = []
-
     # Convert the owner to uid
     CONFIG['uid'] = pwd.getpwnam(CONFIG['owner']).pw_uid
     CONFIG['gid'] = grp.getgrnam(CONFIG['group']).gr_gid
+
+
+def load_exclusions(file_name):
+    '''
+    Load a list of package repositories to be excluded.  Comments
+    and blank lines will be removed.
+    '''
+
+    debug('loading "%s"' % (file_name))
+    # Open the exclusions file
+    try:
+        handle = open(file_name, 'r')
+    except OSError as err:
+        error('Unable to open "%s": %s' % (file_name, err))
+        return None
+
+    # Creat an empty list for the exclusions
+    exclusions = []
+
+    # Iterate over the file
+    for line in handle:
+        # Remove comments
+        line = line.split('#')[0]
+
+        # Remove leading and trailing whitespace
+        line = line.strip()
+
+        # Ignore empty lines
+        if line == "":
+            continue
+
+        # Add the remaining viable line to the list
+        exclusions.append(line)
+
+    # close the file
+    handle.close()
+
+    # Return the list
+    return exclusions
 
 
 def debug(string):

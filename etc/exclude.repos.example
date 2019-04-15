@@ -1,0 +1,4 @@
+# Exclude SuSE repos
+#
+# List repositories to be excluded below.  Comments and 
+# blank lines will be removed during parsing.
