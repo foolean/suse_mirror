@@ -109,6 +109,9 @@ def request_url_head(url, auth_token):
         if response.status_code != 502:
             return None
 
+        # Keep track of 502 errors
+        STATS['502_errors'] += 1
+
         attempt = attempt + 1
     error('Unable to retrieve metadata for %s: exceeded max number of attempts' % (url))
     return None
@@ -136,11 +139,22 @@ def request_url(url, auth_token):
         # Request the URL
         verbose3('Retrieving %s?%s (%s/%s)' % (url, auth_token, attempt, CONFIG['max_retries']))
         response = requests.get(url + '?' + auth_token, headers=headers)
+
+        # Make sure the request was successful
         if response.status_code == 200:
             return response
+
         error('Unable to retrieve %s?%s: %s: %s' % (url, auth_token, response.reason, response.status_code))
+
+        # The upstream SuSE servers are prone to returning a Bad Gateway (502)
+        # error.  We'll return None (fail) for anything other than a Bad
+        # Gateway error.
         if response.status_code != 502:
             return None
+
+        # Keep track of 502 errors
+        STATS['502_errors'] += 1
+
         attempt = attempt + 1
     error('Unable to retrieve %s: exceeded max number of attempts')
     return None
@@ -765,15 +779,12 @@ def clean_exit(exit_code):
     STATS['end'] = datetime.datetime.now()
     stats()
 
-    # Announce that we're done
-    notice('Finished')
-
     # Exit with our desired exit code
     sys.exit(exit_code)
 
 
 def stats():
-    
+
     notice('Stats')
     notice('Started:        %s' % (STATS['start']))
     notice('Finished:       %s' % (STATS['end']))
@@ -791,6 +802,7 @@ def stats():
     notice('  Downloaded:   %s' % (STATS['downloaded']))
     notice('  Skipped:      %s' % (STATS['skipped']))
     notice('Errors:         %s' % (STATS['errors']))
+    notice(' 502 errors:    %s' % (STATS['502_errors']))
 
 
 def main():
@@ -877,6 +889,10 @@ def main():
             download_thread.join()
     else:
         notice('Queue is empty, nothing to do')
+
+    # Announce that we're done and exit cleanly
+    notice('Finished')
+    clean_exit(0)
 
 
 # Allow other programs to source this one as a library
