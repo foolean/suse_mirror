@@ -725,7 +725,15 @@ def signal_handler(signalnum, frame):
     Helper function to exit cleanly when SIGINT is caught
     '''
     del frame
-    notice('caught signal "%s"' % (signal.Signals(signalnum).name))
+
+    # Create a list of signal names so we can convert
+    # the incoming signal number to it's readable name.
+    # (doing it this way is more portable)
+    sig_items = reversed(sorted(signal.__dict__.items()))
+    signals = dict((k, v) for v, k in reversed(sorted(signal.__dict__.items())) if v.startswith('SIG') and not v.startswith('SIG_'))
+
+    notice('caught signal "%s"' % (signals[signalnum]))
+
     clean_exit(0)
 
 
