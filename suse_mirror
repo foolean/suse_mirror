@@ -617,6 +617,21 @@ def load_exclusions(file_name):
     return exclusions
 
 
+def seconds2human(seconds):
+    '''
+    Helper function to convert seconds into
+    a human readable format
+    '''
+    days = seconds // (24 * 3600)
+    seconds = seconds % (24 * 3600)
+    hours = seconds // 3600
+    seconds %= 3600
+    minutes = seconds // 60
+    seconds %= 60
+
+    return ('%d days, %d hours, %d minutes, %d seconds' % (days, hours, minutes, seconds))
+
+
 def debug(string):
     '''
     Helper function to log/print debugging messages.
@@ -747,6 +762,7 @@ def clean_exit(exit_code):
         os.remove(LOCKFILE)
 
     # Print the statistics
+    STATS['end'] = datetime.datetime.now()
     stats()
 
     # Announce that we're done
@@ -759,6 +775,11 @@ def clean_exit(exit_code):
 def stats():
     
     notice('Stats')
+    notice('Started:        %s' % (STATS['start']))
+    notice('Finished:       %s' % (STATS['end']))
+    duration = int(STATS['end'].strftime('%s')) - int(STATS['start'].strftime('%s'))
+
+    notice('Duration:       %s' % (seconds2human(duration)))
     notice('Repositories:   %s' % (STATS['repositories']))
     notice('Queued:         %s' % (STATS['queued']))
     if download_queue in vars():
@@ -803,6 +824,7 @@ def main():
 
     # Announce that we're starting
     notice('Starting')
+    STATS['start'] = datetime.datetime.now()
 
     # Set the umask for this run
     os.umask(int(CONFIG['umask'], 8))
