@@ -61,7 +61,8 @@ STATS = {
     'skipped': 0,
     'errors': 0,
     '502_errors': 0,
-    'size_mismatch': 0,
+    'bad_size': 0,
+    'bad_mtime': 0,
 }
 
 # Work around for strptime thread safety bug (http://bugs.python.org/issue7980)
@@ -244,8 +245,10 @@ def download_file(repo, distro, url, auth_token, basepath):
     stat = os.stat(local_path)
     if int(stat.st_mtime) != remote_mtime:
         error('local mtime does not match remote (%s != %s): %s' % (stat.st_mtime, remote_mtime, local_path))
+        STATS['bad_mtime'] += 1
     if int(stat.st_size) != remote_size:
         error('local size does not match remote (%s != %s): %s' % (stat.st_size, remote_size, local_path))
+        STATS['bad_size'] += 1
 
     # Update the downloaded file count
     thread_lock.acquire()
@@ -785,24 +788,26 @@ def clean_exit(exit_code):
 
 def stats():
 
-    notice('Stats')
-    notice('Started:        %s' % (STATS['start']))
-    notice('Finished:       %s' % (STATS['end']))
+    notice('Stats:')
+    notice('Started:         %s' % (STATS['start']))
+    notice('Finished:        %s' % (STATS['end']))
     duration = int(STATS['end'].strftime('%s')) - int(STATS['start'].strftime('%s'))
 
-    notice('Duration:       %s' % (seconds2human(duration)))
-    notice('Repositories:   %s' % (STATS['repositories']))
-    notice('Queued:         %s' % (STATS['queued']))
+    notice('Duration:        %s' % (seconds2human(duration)))
+    notice('Repositories:    %s' % (STATS['repositories']))
+    notice('Queued:          %s' % (STATS['queued']))
     if download_queue in vars():
-        notice(' Remaining:     %s' % (download_queue.qsize()))
+        notice(' Remaining:      %s' % (download_queue.qsize()))
     else:
-        notice(' Remaining:     0')
-    notice(' Directories:   %s' % (STATS['directories']))
-    notice(' Files:         %s' % (STATS['files']))
-    notice('  Downloaded:   %s' % (STATS['downloaded']))
-    notice('  Skipped:      %s' % (STATS['skipped']))
-    notice('Errors:         %s' % (STATS['errors']))
-    notice(' 502 errors:    %s' % (STATS['502_errors']))
+        notice(' Remaining:      0')
+    notice(' Directories:    %s' % (STATS['directories']))
+    notice(' Files:          %s' % (STATS['files']))
+    notice('  Downloaded:    %s' % (STATS['downloaded']))
+    notice('  Skipped:       %s' % (STATS['skipped']))
+    notice('Errors:          %s' % (STATS['errors']))
+    notice(' 502 errors:     %s' % (STATS['502_errors']))
+    notice(' Size mismatch:  %s' % (STATS['bad_size']))
+    notice(' Mtime mismatch: %s' % (STATS['bad_mtime']))
 
 
 def main():
