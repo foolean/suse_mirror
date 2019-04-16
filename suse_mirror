@@ -51,8 +51,18 @@ download_threads = []
 # Lock for doing certain in a thread-safe manner
 thread_lock = threading.Lock()
 
-# Global counters
-downloaded = 0
+# Global stats
+STATS = {
+    'repositories': 0,
+    'queued': 0,
+    'directories': 0,
+    'files': 0,
+    'downloaded': 0,
+    'skipped': 0,
+    'errors': 0,
+    '502_errors': 0,
+    'size_mismatch': 0,
+}
 
 # Work around for strptime thread safety bug (http://bugs.python.org/issue7980)
 time.strptime('2012', '%Y')
@@ -152,9 +162,6 @@ def download_file(repo, distro, url, auth_token, basepath):
     '''
     Function to download files
     '''
-    global downloaded
-
-
     # Assemble the full path to the local file
     local_path = os.path.join(CONFIG['base_path'], repo, distro, basepath, os.path.basename(url))
 
@@ -228,7 +235,7 @@ def download_file(repo, distro, url, auth_token, basepath):
 
     # Update the downloaded file count
     thread_lock.acquire()
-    downloaded += 1
+    STATS['downloaded'] += 1
     thread_lock.release()
 
     return
@@ -283,6 +290,7 @@ def queue_url(url_type, repo, distro, url, auth_token, basepath=''):
     '''
     verbose3('Queueing %s/%s %s (token:%s)' % (repo, distro, url, auth_token))
     download_queue.put([url_type, repo, distro, url, auth_token, basepath])
+    STATS['queued'] += 1
     return
 
 
@@ -296,8 +304,10 @@ def process_queue():
 
         # Directories get mirrored/queued, files get downloaded
         if url_type == 'dir':
+            STATS['directories'] += 1
             mirror_url(repo, distro, url, auth_token, basepath)
         else:
+            STATS['files'] += 1
             download_file(repo, distro, url, auth_token, basepath)
 
         # Mark this task as complere
@@ -625,6 +635,7 @@ def error(string):
     include the current thread's identifier.
     '''
     logprint('error(%s): %s' % (threading.current_thread().name, string))
+    STATS['errors'] += 1
     return
 
 
@@ -727,16 +738,30 @@ def clean_exit(exit_code):
         verbose1('Removing %s' % (LOCKFILE))
         os.remove(LOCKFILE)
 
+    # Print the statistics
+    stats()
+
     # Announce that we're done
     notice('Finished')
 
-    notice('Stats')
-    notice('Downloaded:          %s' % (downloaded))
-    if download_queue in vars():
-        notice('Remaining in queue:  %s' % (dowload_queue.qsize()))
-
     # Exit with our desired exit code
     sys.exit(exit_code)
+
+
+def stats():
+    
+    notice('Stats')
+    notice('Repositories:   %s' % (STATS['repositories']))
+    notice('Queued:         %s' % (STATS['queued']))
+    if download_queue in vars():
+        notice(' Remaining:     %s' % (download_queue.qsize()))
+    else:
+        notice(' Remaining:     0')
+    notice(' Directories:   %s' % (STATS['directories']))
+    notice(' Files:         %s' % (STATS['files']))
+    notice('  Downloaded:   %s' % (STATS['downloaded']))
+    notice('  Skipped:      %s' % (STATS['skipped']))
+    notice('Errors:         %s' % (STATS['errors']))
 
 
 def main():
@@ -807,6 +832,7 @@ def main():
                     url = urlp.scheme + "://" + urlp.netloc + urlp.path
                     auth_token = urlp.query
 
+                    STATS['repositories'] += 1
                     queue_url('dir', repo, distro_target, url, auth_token)
 
     debug('Queue has %s objects' % (download_queue.qsize()))
