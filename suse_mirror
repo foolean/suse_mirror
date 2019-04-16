@@ -198,6 +198,7 @@ def download_file(repo, distro, url, auth_token, basepath):
         stat = os.stat(local_path)
         if int(stat.st_mtime) == remote_mtime and int(stat.st_size) == remote_size:
             verbose3('%s already exists, skipping' % (local_path))
+            STATS['skipped'] += 1
             return
         else:
             verbose2('%s exists but needs to be re-downloaded' % (local_path))
