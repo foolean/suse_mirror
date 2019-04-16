@@ -291,25 +291,25 @@ def process_queue():
     Iterate over the queue
     '''
     while True:
-		# Get the next URL to be downloaded/mirrored
+        # Get the next URL to be downloaded/mirrored
         (url_type, repo, distro, url, auth_token, basepath) = download_queue.get()
 
-		# Directories get mirrored/queued, files get downloaded
+        # Directories get mirrored/queued, files get downloaded
         if url_type == 'dir':
             mirror_url(repo, distro, url, auth_token, basepath)
         else:
             download_file(repo, distro, url, auth_token, basepath)
 
-		# Mark this task as complere
+        # Mark this task as complere
         download_queue.task_done()
 
-		# Count the number of threads still alive
+        # Count the number of threads still alive
         alive = 0
         for download_thread in download_threads:
             if download_thread.isAlive():
                 alive += 1
 
-		# Announce the current status for debugging
+        # Announce the current status for debugging
         debug('Status: threads=%s/%s, queue_remaining=%s' % (alive, len(download_threads), download_queue.qsize()))
 
         # Exit the loop if there is nothing left in the queue
@@ -385,8 +385,29 @@ def get_available_repos():
     return targets
 
 
-def list_available_repos(available_repos, distro=''):
+def list_available_distros(available_repos):
+    '''
+    Helper function to list the distro_targets
+    available to the subscription
+    '''
+    distro_targets = []
+    for repo in sorted(available_repos):
+        for distro_target in available_repos[repo]:
+            if distro_target is None:
+                distro_target = 'None'
+            if distro_target not in distro_targets:
+                distro_targets.append(distro_target)
 
+    for distro_target in sorted(distro_targets):
+        print('%s' % (distro_target))
+    clean_exit(0)
+
+
+def list_available_repos(available_repos, distro=''):
+    '''
+    Helper function to list the package repositories
+    available to the subscription
+    '''
     for repo in sorted(available_repos):
         for distro_target in available_repos[repo]:
             if distro == '' or distro == distro_target:
@@ -763,17 +784,7 @@ def main():
 
     # Get the list of distro targets available to our subscription
     if CONFIG['list_available_distros']:
-        distro_targets = []
-        for repo in sorted(available_repos):
-            for distro_target in available_repos[repo]:
-                if distro_target is None:
-                    distro_target = 'None'
-                if distro_target not in distro_targets:
-                    distro_targets.append(distro_target)
-
-        for distro_target in sorted(distro_targets):
-            print('%s' % (distro_target))
-        clean_exit(0)
+        list_available_distros(available_repos)
 
     verbose2('Creating threads')
     for i in range(CONFIG['nthreads']):
