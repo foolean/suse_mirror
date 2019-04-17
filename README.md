@@ -16,19 +16,19 @@ This script does require an active SuSE subscription (https://www.suse.com/suppo
 
 ### Debian
 
-python3
-python3-bs4
-python-configparser
-python-requests
-python3-requests
-python3-urllib3
+    python3
+    python3-bs4
+    python-configparser
+    python-requests
+    python3-requests
+    python3-urllib3
 
 ### CentOS/RedHat
 
-python-configparser
-python-beautifulsoup4
-python-requests
-python-urllib3
+    python-configparser
+    python-beautifulsoup4
+    python-requests
+    python-urllib3
 
 
 ## Installation
