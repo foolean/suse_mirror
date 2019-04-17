@@ -103,7 +103,7 @@ def request_url_head(url, auth_token):
     # Assemble the headers to be used
     headers = {
         'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'accept-encoding': 'gzip, deflate, br',
+        'accept-encoding': 'identity',
         'accept-language': 'en-US, en;q=0.5',
         'cache-control': 'no-cache',
         'connection': 'keepalive',
@@ -152,7 +152,7 @@ def request_url(url, auth_token):
     # Assemble the headers to be used
     headers = {
         'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'accept-encoding': 'gzip, deflate, br',
+        'accept-encoding': 'identity',
         'accept-language': 'en-US, en;q=0.5',
         'cache-control': 'no-cache',
         'connection': 'keepalive',
