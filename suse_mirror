@@ -1,6 +1,33 @@
 #!/usr/bin/env python3
+#
+# Copyright 2019 Bennett Samowich <bennett@foolean.org>
+#
+# suse_mirror is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# suse_mirror is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with suse_mirror.  If not, see <http://www.gnu.org/licenses/>.
+#
+###############################################################################
 '''
-SuSE package repository mirroring tool.
+SuSE package repository mirroring tool
+
+SuSE provides their own mirroring tool however, it relies on being run from a
+SuSE/SLES system.  There are cases where a site must support multiple
+operating systems and thus the mirror may not be housed on a SuSE/SLES system.
+This script is a relatively simple python script that can mirror the SuSE
+packages repositories from any system.
+
+Note:
+This script does require an active SuSE subscription
+(https://www.suse.com/support/)
 '''
 
 # Import standard libraries
@@ -788,7 +815,9 @@ def clean_exit(exit_code):
 
 
 def stats():
-
+    '''
+    Helper function to output statistics
+    '''
     notice('Stats:')
     notice('Started:         %s' % (STATS['start']))
     notice('Finished:        %s' % (STATS['end']))
