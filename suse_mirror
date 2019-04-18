@@ -116,8 +116,10 @@ def request_url_head(url, auth_token):
 
     while attempt <= CONFIG['max_retries']:
         # Request the metadata for the URL
+        # We use 'get' and 'stream=True' because the remote server seems to
+        # honor the accept-encoding header and return the correct file size.
         verbose3('Retrieving metadata for "%s?%s" (%s/%s)' % (url, auth_token, attempt, CONFIG['max_retries']))
-        response = requests.head(url + '?' + auth_token, headers=headers)
+        response = requests.get(url + '?' + auth_token, headers=headers, stream=True)
 
         # Make sure the request was successful
         if response.status_code == 200:
@@ -824,6 +826,7 @@ def stats():
     duration = int(STATS['end'].strftime('%s')) - int(STATS['start'].strftime('%s'))
 
     notice('Duration:        %s' % (seconds2human(duration)))
+    notice('Threads:         %s' % (CONFIG['nthreads']))
     notice('Repositories:    %s' % (STATS['repositories']))
     notice('Queued:          %s' % (STATS['queued']))
     if download_queue in vars():
