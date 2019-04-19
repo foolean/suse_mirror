@@ -772,7 +772,7 @@ def logprint(string):
     '''
     thread_lock.acquire()
 
-    if CONFIG['syslog'] is True:
+    if OPTIONS['syslog'] is True:
         syslog.syslog(string)
 
     stamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
@@ -820,27 +820,28 @@ def stats():
     '''
     Helper function to output statistics
     '''
-    notice('Stats:')
-    notice('Started:         %s' % (STATS['start']))
-    notice('Finished:        %s' % (STATS['end']))
-    duration = int(STATS['end'].strftime('%s')) - int(STATS['start'].strftime('%s'))
+    if 'start' in STATS:
+        notice('Stats:')
+        notice('Started:         %s' % (STATS['start']))
+        notice('Finished:        %s' % (STATS['end']))
+        duration = int(STATS['end'].strftime('%s')) - int(STATS['start'].strftime('%s'))
 
-    notice('Duration:        %s' % (seconds2human(duration)))
-    notice('Threads:         %s' % (CONFIG['nthreads']))
-    notice('Repositories:    %s' % (STATS['repositories']))
-    notice('Queued:          %s' % (STATS['queued']))
-    if download_queue in vars():
-        notice(' Remaining:      %s' % (download_queue.qsize()))
-    else:
-        notice(' Remaining:      0')
-    notice(' Directories:    %s' % (STATS['directories']))
-    notice(' Files:          %s' % (STATS['files']))
-    notice('  Downloaded:    %s' % (STATS['downloaded']))
-    notice('  Skipped:       %s' % (STATS['skipped']))
-    notice('Errors:          %s' % (STATS['errors']))
-    notice(' 502 errors:     %s' % (STATS['502_errors']))
-    notice(' Size mismatch:  %s' % (STATS['bad_size']))
-    notice(' Mtime mismatch: %s' % (STATS['bad_mtime']))
+        notice('Duration:        %s' % (seconds2human(duration)))
+        notice('Threads:         %s' % (CONFIG['nthreads']))
+        notice('Repositories:    %s' % (STATS['repositories']))
+        notice('Queued:          %s' % (STATS['queued']))
+        if download_queue in vars():
+            notice(' Remaining:      %s' % (download_queue.qsize()))
+        else:
+            notice(' Remaining:      0')
+        notice(' Directories:    %s' % (STATS['directories']))
+        notice(' Files:          %s' % (STATS['files']))
+        notice('  Downloaded:    %s' % (STATS['downloaded']))
+        notice('  Skipped:       %s' % (STATS['skipped']))
+        notice('Errors:          %s' % (STATS['errors']))
+        notice(' 502 errors:     %s' % (STATS['502_errors']))
+        notice(' Size mismatch:  %s' % (STATS['bad_size']))
+        notice(' Mtime mismatch: %s' % (STATS['bad_mtime']))
 
 
 def main():
