@@ -9,6 +9,9 @@ base_path = /srv/mirror/suse
 # Number of threads to use
 nthreads = 20
 
+# Timeout for connections and reads
+timeout = 30
+
 # Number times to retry downloading metadata and files
 max_retries = 3
 
@@ -24,6 +27,3 @@ mirror_sections =
 
 # File of repositories to be excluded
 exclude_file = exclude.repos
-
-# List of repositories to be excluded
-#exclude_repositories =
