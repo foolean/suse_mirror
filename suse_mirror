@@ -90,6 +90,7 @@ STATS = {
     '502_errors': 0,
     'bad_size': 0,
     'bad_mtime': 0,
+    'timeout_errors': 0,
 }
 
 # Work around for strptime thread safety bug (http://bugs.python.org/issue7980)
@@ -125,6 +126,7 @@ def request_url_head(url, auth_token):
             response = requests.get(url + '?' + auth_token, headers=headers, stream=True)
         except requests.exceptions.Timeout as exception:
             error('Timeout trying to retrieve metadata for %s?%s' % (url, auth_token))
+            CONFIG['timeout_errors'] += 1
             continue
         except requests.exceptions.RequestException as exception:
             error('Unable to retrieve metadata for %s?%s: %s' % (url, auth_token, exception))
@@ -182,6 +184,7 @@ def request_url(url, auth_token):
             response = requests.get(url + '?' + auth_token, headers=headers, timeout=CONFIG['timeout'])
         except requests.exceptions.Timeout as exception:
             error('Timeout trying to retrieve %s?%s' % (url, auth_token))
+            CONFIG['timeout_errors'] += 1
             continue
         except requests.exceptions.RequestException as exception:
             error('Unable to retrieve %s?%s: %s' % (url, auth_token, exception))
@@ -870,6 +873,7 @@ def stats():
         notice(' 502 errors:     %s' % (STATS['502_errors']))
         notice(' Size mismatch:  %s' % (STATS['bad_size']))
         notice(' Mtime mismatch: %s' % (STATS['bad_mtime']))
+        notice(' Timeout:        %s' % (STATS['timeout_errors']))
 
 
 def main():
