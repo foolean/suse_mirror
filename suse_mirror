@@ -87,6 +87,7 @@ STATS = {
     'downloaded': 0,
     'skipped': 0,
     'errors': 0,
+    '404_errors': 0,
     '502_errors': 0,
     'bad_size': 0,
     'bad_mtime': 0,
@@ -142,6 +143,10 @@ def request_url_head(url, auth_token):
             else:
                 return response
 
+        # Keep track of 404 errors
+        if response.status_code == 404:
+            STATS['404_errors'] += 1
+
         error('Unable to retrieve metadata for %s?%s: %s: %s' % (url, auth_token, response.reason, response.status_code))
 
         # The upstream SuSE servers are prone to returning a Bad Gateway (502)
@@ -193,6 +198,10 @@ def request_url(url, auth_token):
         # Make sure the request was successful
         if response.status_code == 200:
             return response
+
+        # Keep track of 404 errors
+        if response.status_code == 404:
+            STATS['404_errors'] += 1
 
         error('Unable to retrieve %s?%s: %s: %s' % (url, auth_token, response.reason, response.status_code))
 
@@ -870,6 +879,7 @@ def stats():
         notice('  Downloaded:    %s' % (STATS['downloaded']))
         notice('  Skipped:       %s' % (STATS['skipped']))
         notice('Errors:          %s' % (STATS['errors']))
+        notice(' 404 errors:     %s' % (STATS['404_errors']))
         notice(' 502 errors:     %s' % (STATS['502_errors']))
         notice(' Size mismatch:  %s' % (STATS['bad_size']))
         notice(' Mtime mismatch: %s' % (STATS['bad_mtime']))
